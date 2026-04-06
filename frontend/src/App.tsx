@@ -19,7 +19,7 @@ const socket: Socket = io('http://localhost:5000');
 
 const iceServers: RTCConfiguration = {
   iceServers: [
-    { urls: 'turn:global.turn.twilio.com:3478?transport=tcp' } // Replace with your fetch('/turn') logic later
+    { urls: 'stun:stun.l.google.com:19302' } // Use public STUN server for ICE
   ]
 };
 
@@ -36,6 +36,7 @@ function App() {
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
+  const pendingCandidates = useRef<RTCIceCandidateInit[]>([]);
 
   // ==========================================
   // 1. INITIALIZE CAMERA ON LOAD
@@ -97,6 +98,16 @@ function App() {
         const answer: RTCSessionDescriptionInit = await peerConnectionRef.current.createAnswer();
         await peerConnectionRef.current.setLocalDescription(answer);
         socket.emit('answer', answer);
+        
+        // Process any buffered candidates
+        pendingCandidates.current.forEach(async (c) => {
+          try {
+            await peerConnectionRef.current?.addIceCandidate(new RTCIceCandidate(c));
+          } catch (err) {
+            console.error("Error adding buffered ice candidate", err);
+          }
+        });
+        pendingCandidates.current = [];
       } catch (err) {
         console.error("Error handling offer:", err);
       }
@@ -107,6 +118,16 @@ function App() {
       if (peerConnectionRef.current) {
         try {
           await peerConnectionRef.current.setRemoteDescription(answer);
+          
+          // Process any buffered candidates
+          pendingCandidates.current.forEach(async (c) => {
+            try {
+              await peerConnectionRef.current?.addIceCandidate(new RTCIceCandidate(c));
+            } catch (err) {
+              console.error("Error adding buffered ice candidate", err);
+            }
+          });
+          pendingCandidates.current = [];
         } catch (err) {
           console.error("Error setting remote description from answer:", err);
         }
@@ -117,7 +138,11 @@ function App() {
     socket.on('candidate', async (candidate: RTCIceCandidateInit) => {
       if (peerConnectionRef.current) {
         try {
-          await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+          if (peerConnectionRef.current.remoteDescription) {
+            await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+          } else {
+            pendingCandidates.current.push(candidate);
+          }
         } catch (err) {
           console.error("Error adding received ice candidate", err);
         }
@@ -202,11 +227,23 @@ function App() {
       remoteVideoRef.current.srcObject = null;
     }
     setMessages([]);
+    pendingCandidates.current = [];
   };
 
   const sendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatInput.trim() || !dataChannelRef.current || dataChannelRef.current.readyState !== 'open') return;
+    if (!chatInput.trim()) return;
+
+    if (!dataChannelRef.current) {
+      alert("Chat connection is not established yet.");
+      return;
+    }
+
+    if (dataChannelRef.current.readyState !== 'open') {
+      alert(`Chat connection is ${dataChannelRef.current.readyState}. Please wait a moment for the connection to fully establish.`);
+      console.warn("Data channel state:", dataChannelRef.current.readyState);
+      return;
+    }
 
     dataChannelRef.current.send(chatInput);
     setMessages((prev) => [...prev, { sender: 'me', text: chatInput }]);
