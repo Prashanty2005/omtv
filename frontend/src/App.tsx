@@ -7,6 +7,7 @@ type AppState = 'idle' | 'waiting' | 'connected';
 
 interface MatchedPayload {
   initiator: boolean;
+  sharedInterests: string[];
 }
 
 interface Message {
@@ -15,7 +16,7 @@ interface Message {
 }
 
 // Connect to the Node.js signaling server
-const socket: Socket = io('http://localhost:5000'); 
+const socket: Socket = io('http://localhost:5000');
 
 const iceServers: RTCConfiguration = {
   iceServers: [
@@ -25,9 +26,16 @@ const iceServers: RTCConfiguration = {
 
 function App() {
   // --- UI STATE ---
-  const [appState, setAppState] = useState<AppState>('idle'); 
+  const [appState, setAppState] = useState<AppState>('idle');
   const [messages, setMessages] = useState<Message[]>([]);
   const [chatInput, setChatInput] = useState('');
+  const [isDarkMode, setIsDarkMode] = useState(true);
+  const [isMicOn, setIsMicOn] = useState(true);
+  const [isCamOn, setIsCamOn] = useState(true);
+
+  // Custom Interests State
+  const [interestsInput, setInterestsInput] = useState('');
+  const [sharedInterests, setSharedInterests] = useState<string[]>([]);
 
   // --- WEBRTC REFS ---
   // Strongly typing our refs to HTML elements and WebRTC interfaces
@@ -44,12 +52,12 @@ function App() {
   useEffect(() => {
     const startCamera = async () => {
       try {
-        const stream: MediaStream = await navigator.mediaDevices.getUserMedia({ 
-          video: true, 
-          audio: true 
+        const stream: MediaStream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true
         });
         localStreamRef.current = stream;
-        
+
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
         }
@@ -57,7 +65,7 @@ function App() {
         console.error("Camera access denied:", err);
       }
     };
-    
+
     startCamera();
 
     // Cleanup camera tracks when component unmounts
@@ -75,6 +83,14 @@ function App() {
     // --- WE ARE MATCHED! ---
     socket.on('matched', async (data: MatchedPayload) => {
       setAppState('connected');
+
+      // Store our mutual interests
+      if (data.sharedInterests) {
+        setSharedInterests(data.sharedInterests);
+      } else {
+        setSharedInterests([]);
+      }
+
       createPeerConnection(data.initiator);
 
       // If the server told us we are the initiator, we create the Offer
@@ -92,13 +108,13 @@ function App() {
     // --- RECEIVE OFFER ---
     socket.on('offer', async (offer: RTCSessionDescriptionInit) => {
       if (!peerConnectionRef.current) return;
-      
+
       try {
         await peerConnectionRef.current.setRemoteDescription(offer);
         const answer: RTCSessionDescriptionInit = await peerConnectionRef.current.createAnswer();
         await peerConnectionRef.current.setLocalDescription(answer);
         socket.emit('answer', answer);
-        
+
         // Process any buffered candidates
         pendingCandidates.current.forEach(async (c) => {
           try {
@@ -118,7 +134,7 @@ function App() {
       if (peerConnectionRef.current) {
         try {
           await peerConnectionRef.current.setRemoteDescription(answer);
-          
+
           // Process any buffered candidates
           pendingCandidates.current.forEach(async (c) => {
             try {
@@ -166,6 +182,33 @@ function App() {
     };
   }, []);
 
+  // ==========================================
+  // HARDWARE TOGGLES (MIC & CAMERA)
+  // ==========================================
+
+  // Watch for changes to the Microphone state
+  useEffect(() => {
+    if (localStreamRef.current) {
+      // Get the audio track from the stream
+      const audioTracks = localStreamRef.current.getAudioTracks();
+      if (audioTracks.length > 0) {
+        // Enable or disable the track based on state
+        audioTracks[0].enabled = isMicOn;
+      }
+    }
+  }, [isMicOn]); // This runs every time isMicOn changes
+
+  // Watch for changes to the Camera state
+  useEffect(() => {
+    if (localStreamRef.current) {
+      // Get the video track from the stream
+      const videoTracks = localStreamRef.current.getVideoTracks();
+      if (videoTracks.length > 0) {
+        // Enable or disable the track based on state
+        videoTracks[0].enabled = isCamOn;
+      }
+    }
+  }, [isCamOn]); // This runs every time isCamOn changes
   // ==========================================
   // 3. WEBRTC HELPER FUNCTIONS
   // ==========================================
@@ -227,6 +270,7 @@ function App() {
       remoteVideoRef.current.srcObject = null;
     }
     setMessages([]);
+    setSharedInterests([]);
     pendingCandidates.current = [];
   };
 
@@ -256,74 +300,153 @@ function App() {
   const findPartner = () => {
     cleanupConnection(); // Clear any old connection just in case
     setAppState('waiting');
-    socket.emit('find-partner');
+
+    // Parse interests
+    const parsedArray = interestsInput
+      .split(',')
+      .map(i => i.trim())
+      .filter(i => i !== '');
+
+    socket.emit('find-partner', { interests: parsedArray });
   };
 
   const stopChat = () => {
     cleanupConnection();
     setAppState('idle');
     // Emitting this while connected tells the server to skip us
-    socket.emit('find-partner'); 
+    socket.emit('find-partner', { interests: [] });
   };
 
   // ==========================================
   // 5. RENDER UI
   // ==========================================
   return (
-    <div className="app-container">
-      <h1>Omegle Clone</h1>
-      
-      <div className="video-grid">
-        <div className="video-box local">
-          <video ref={localVideoRef} autoPlay muted playsInline />
-          <span className="label">You</span>
-        </div>
-        
-        <div className="video-box remote">
-          {appState === 'waiting' && <div className="overlay-text">Looking for someone...</div>}
-          {appState === 'idle' && <div className="overlay-text">Click Start to find a stranger</div>}
-          <video ref={remoteVideoRef} autoPlay playsInline />
-          <span className="label">Stranger</span>
-        </div>
-      </div>
+    <div className={`app-wrapper ${isDarkMode ? 'dark-theme' : 'light-theme'}`}>
+      <div className="app-container glass">
 
-      <div className="controls">
-        {appState === 'idle' && (
-          <button onClick={findPartner} className="btn-start">Start Chat</button>
-        )}
-        
-        {appState === 'waiting' && (
-          <button disabled className="btn-waiting">Searching...</button>
-        )}
-
-        {appState === 'connected' && (
-          <>
-            <button onClick={stopChat} className="btn-stop">Stop</button>
-            <button onClick={findPartner} className="btn-next">Next Stranger</button>
-          </>
-        )}
-      </div>
-
-      {appState === 'connected' && (
-        <div className="chat-container">
-          <div className="chat-messages">
-            {messages.map((msg, index) => (
-              <div key={index} className={`message ${msg.sender}`}>
-                {msg.text}
-              </div>
-            ))}
+        {/* HEADER */}
+        <header className="app-header">
+          <h1>OmTV <span className="live-badge">LIVE</span></h1>
+          <div className="header-actions">
+            {appState === 'connected' && <span className="timer">02:14</span>}
+            <button className="icon-btn" onClick={() => setIsDarkMode(!isDarkMode)}>
+              {isDarkMode ? '☀️' : '🌙'}
+            </button>
           </div>
-          <form className="chat-input-area" onSubmit={sendMessage}>
-            <input 
-              type="text" 
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              placeholder="Type a message..."
-            />
-            <button type="submit">Send</button>
-          </form>
+        </header>
+
+        {/* INTERESTS BANNER */}
+        {appState === 'connected' && (
+          <div className="interests-banner slide-down">
+            ✨ {sharedInterests && sharedInterests.length > 0
+              ? `You both like: ${sharedInterests.join(', ')}`
+              : 'Talking to a random stranger'}
+          </div>
+        )}
+
+        {/* VIDEO GRID */}
+        <div className={`video-grid ${appState === 'connected' ? 'connected-glow' : ''}`}>
+
+          <div className="video-box local">
+            <video ref={localVideoRef} autoPlay muted playsInline />
+            <div className="video-overlay">
+              <span className="label">You</span>
+              <div className="media-controls">
+                <button className={`icon-btn ${!isMicOn ? 'danger' : ''}`} onClick={() => setIsMicOn(!isMicOn)}>
+                  {isMicOn ? '🎙️' : '🔇'}
+                </button>
+                <button className={`icon-btn ${!isCamOn ? 'danger' : ''}`} onClick={() => setIsCamOn(!isCamOn)}>
+                  {isCamOn ? '📷' : '🚫'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="video-box remote">
+            {appState === 'waiting' && (
+              <div className="status-overlay waiting">
+                <div className="spinner"></div>
+                <p>Searching the globe...</p>
+              </div>
+            )}
+            {appState === 'idle' && (
+              <div className="status-overlay idle">
+                <p>Click Start to meet someone new</p>
+              </div>
+            )}
+            <video ref={remoteVideoRef} autoPlay playsInline className={appState !== 'connected' ? 'blur' : ''} />
+            <div className="video-overlay">
+              <span className="label">
+                Stranger
+                {appState === 'connected' && <span className="status-dot green"></span>}
+              </span>
+              {appState === 'connected' && (
+                <button className="icon-btn tooltip" data-tooltip="Fullscreen">⛶</button>
+              )}
+            </div>
+          </div>
         </div>
-      )}
+
+        {/* MAIN CONTROLS */}
+        <div className="main-controls">
+          {appState === 'idle' && (
+            <div className="interest-input-container">
+              <input
+                type="text"
+                placeholder="Add interests (e.g. anime, coding)"
+                value={interestsInput}
+                onChange={(e) => setInterestsInput(e.target.value)}
+                className="glass-input"
+              />
+              <button onClick={findPartner} className="btn primary pill pulse-hover">🚀 Start Chat</button>
+            </div>
+          )}
+
+          {appState === 'waiting' && (
+            <button disabled className="btn secondary pill loading">Searching...</button>
+          )}
+
+          {appState === 'connected' && (
+            <div className="action-buttons">
+              <button onClick={stopChat} className="btn danger pill shadow">⏹ Stop</button>
+              <button onClick={findPartner} className="btn primary pill shadow">⏭ Next Stranger</button>
+            </div>
+          )}
+        </div>
+
+        {/* CHAT SECTION */}
+        {appState === 'connected' && (
+          <div className="chat-container glass slide-up">
+            <div className="chat-header">
+              <span>Live Chat</span>
+              <button className="icon-btn text-sm" onClick={() => setMessages([])}>🗑️ Clear</button>
+            </div>
+
+            <div className="chat-messages">
+              {messages.map((msg, index) => (
+                <div key={index} className={`message-wrapper ${msg.sender}`}>
+                  <div className={`message ${msg.sender} pop-in`}>
+                    {msg.text}
+                  </div>
+                  <span className="timestamp">Now</span>
+                </div>
+              ))}
+            </div>
+
+            <form className="chat-input-area" onSubmit={sendMessage}>
+              <button type="button" className="icon-btn emoji-btn">😀</button>
+              <input
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                placeholder="Type a message..."
+                className="glass-input"
+              />
+              <button type="submit" className="send-btn">➤</button>
+            </form>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

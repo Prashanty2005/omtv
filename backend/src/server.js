@@ -14,12 +14,13 @@ const io = new Server(server, {
 });
 
 // --- STATE MANAGEMENT ---
-// This array holds the socket IDs of users waiting for a match
-let waitingQueue = []; 
+// This array holds the users waiting for a match
+// Format: { socketId: 'abc', interests: ['coding', 'music'] }
+let waitingQueue = [];
 
 // This dictionary keeps track of who is talking to whom.
 // Format: { 'userA_id': 'userB_id', 'userB_id': 'userA_id' }
-const connectedPeers = {}; 
+const connectedPeers = {};
 
 io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id}`);
@@ -27,42 +28,67 @@ io.on('connection', (socket) => {
   // ==========================================
   // 1. MATCHMAKING LOGIC (THE "NEXT" BUTTON)
   // ==========================================
-  socket.on('find-partner', () => {
+  socket.on('find-partner', (data) => {
     // If the user is already in a conversation, remove them from it first
     if (connectedPeers[socket.id]) {
       const currentPartner = connectedPeers[socket.id];
       // Notify the partner that this user skipped
-      io.to(currentPartner).emit('partner-disconnected'); 
+      io.to(currentPartner).emit('partner-disconnected');
       // Break the link
       delete connectedPeers[socket.id];
       delete connectedPeers[currentPartner];
     }
 
-    // Is there someone waiting in the queue?
-    if (waitingQueue.length > 0) {
-      // Yes! Remove the first person from the queue
-      const partnerId = waitingQueue.shift();
+    // Also remove from waitingQueue if they hit Next while already searching
+    waitingQueue = waitingQueue.filter(user => user.socketId !== socket.id);
 
-      // Make sure we aren't matching the user with themselves
-      if (partnerId !== socket.id) {
-        // Link them together in our dictionary
-        connectedPeers[socket.id] = partnerId;
-        connectedPeers[partnerId] = socket.id;
+    const userInterests = (data && Array.isArray(data.interests)) ? data.interests : [];
+    let matchIndex = -1;
+    let sharedInterests = [];
 
-        console.log(`Matched! ${socket.id} is talking to ${partnerId}`);
+    // 1. Try finding an interest match first
+    if (userInterests.length > 0) {
+      matchIndex = waitingQueue.findIndex(waiter => {
+        if (!waiter.interests || waiter.interests.length === 0) return false;
+        const common = waiter.interests.filter(i => userInterests.includes(i));
+        if (common.length > 0) {
+          sharedInterests = common;
+          return true;
+        }
+        return false;
+      });
+    }
 
-        // Notify both users that they found a match.
-        // We tell User A to act as the "Caller" (create the WebRTC Offer)
-        io.to(socket.id).emit('matched', { initiator: true });
-        // We tell User B to wait for the Offer
-        io.to(partnerId).emit('matched', { initiator: false });
+    // 2. If no interest match, or user has no interests, fallback
+    if (matchIndex === -1 && waitingQueue.length > 0) {
+      // Find someone with NO interests
+      matchIndex = waitingQueue.findIndex(waiter => !waiter.interests || waiter.interests.length === 0);
+
+      // If everyone in the queue has interests but no match, just pick the first person
+      if (matchIndex === -1) {
+        matchIndex = 0;
       }
+    }
+
+    // 3. Process the match or add to queue
+    if (matchIndex !== -1) {
+      // Found a match!
+      const matchedPartner = waitingQueue.splice(matchIndex, 1)[0];
+      const partnerId = matchedPartner.socketId;
+
+      // Link them together in our dictionary
+      connectedPeers[socket.id] = partnerId;
+      connectedPeers[partnerId] = socket.id;
+
+      console.log(`Matched! ${socket.id} is talking to ${partnerId}`);
+
+      // Notify both users that they found a match.
+      io.to(socket.id).emit('matched', { initiator: true, sharedInterests });
+      io.to(partnerId).emit('matched', { initiator: false, sharedInterests });
     } else {
-      // No one is waiting. Add this user to the queue.
-      if (!waitingQueue.includes(socket.id)) {
-        waitingQueue.push(socket.id);
-        console.log(`User ${socket.id} added to waiting queue.`);
-      }
+      // No one is available to match. Add this user to the queue.
+      waitingQueue.push({ socketId: socket.id, interests: userInterests });
+      console.log(`User ${socket.id} added to waiting queue with interests: ${userInterests}`);
     }
   });
 
@@ -99,7 +125,7 @@ io.on('connection', (socket) => {
     console.log(`User disconnected: ${socket.id}`);
 
     // Remove from queue if they were waiting
-    waitingQueue = waitingQueue.filter(id => id !== socket.id);
+    waitingQueue = waitingQueue.filter(user => user.socketId !== socket.id);
 
     // If they were talking to someone, notify the partner
     const partnerId = connectedPeers[socket.id];
