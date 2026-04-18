@@ -1,9 +1,24 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
+const twilio = require('twilio');
 
 const app = express();
 const server = http.createServer(app);
+
+// TURN Server API
+app.get('/api/turn', async (req, res) => {
+  // Allow cross-origin requests for the frontend
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  try {
+    const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+    const token = await client.tokens.create({ ttl: 3600 });
+    res.json(token.iceServers);
+  } catch (error) {
+    console.error("Error generating TURN token:", error);
+    res.status(500).json({ error: "Failed to generate TURN token" });
+  }
+});
 
 // Enable CORS so your future React frontend can connect to this server
 const io = new Server(server, {
