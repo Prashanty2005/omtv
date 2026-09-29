@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: omtv-backend
+    env: node
+    # Since this is a monorepo, we tell Render to build and run from the backend folder
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: REDIS_URL
+        sync: false # You will paste this in the Render dashboard
+      - key: TWILIO_ACCOUNT_SID
+        sync: false # You will paste this in the Render dashboard
+      - key: TWILIO_AUTH_TOKEN
+        sync: false # You will paste this in the Render dashboard

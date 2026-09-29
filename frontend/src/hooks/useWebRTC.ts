@@ -4,7 +4,8 @@ import type { AppState, MatchedPayload, Message } from './useSignaling';
 
 const fetchIceServers = async (): Promise<RTCIceServer[]> => {
   try {
-    const response = await fetch('http://localhost:5000/api/turn');
+    const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5001';
+    const response = await fetch(`${BACKEND_URL}/api/turn`);
     if (!response.ok) {
       throw new Error(`Failed to fetch TURN servers: ${response.status}`);
     }

@@ -14,7 +14,8 @@ export interface Message {
 }
 
 // Connect to the Node.js signaling server
-const socket: Socket = io('http://localhost:5000');
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5001';
+const socket: Socket = io(BACKEND_URL);
 
 export function useSignaling() {
   const [appState, setAppState] = useState<AppState>('idle');
