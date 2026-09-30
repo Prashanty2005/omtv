@@ -77,7 +77,7 @@ io.on('connection', (socket) => {
           if (item.socketId === socket.id) {
             await stateClient.lRem('waiting_queue', 0, itemStr);
           }
-        } catch(e) {
+        } catch (e) {
           console.error("Error parsing waiting_queue item", e);
         }
       }
@@ -104,7 +104,7 @@ io.on('connection', (socket) => {
                 break;
               }
             }
-          } catch(e) {}
+          } catch (e) { }
         }
       }
 
@@ -113,19 +113,19 @@ io.on('connection', (socket) => {
         // Find someone with NO interests
         for (const itemStr of currentQueue) {
           try {
-             const waiter = JSON.parse(itemStr);
-             if (!waiter.interests || waiter.interests.length === 0) {
-                matchedItemStr = itemStr;
-                parsedPartnerItem = waiter;
-                break;
-             }
-          } catch(e) {}
+            const waiter = JSON.parse(itemStr);
+            if (!waiter.interests || waiter.interests.length === 0) {
+              matchedItemStr = itemStr;
+              parsedPartnerItem = waiter;
+              break;
+            }
+          } catch (e) { }
         }
 
         // If everyone in the queue has interests but no match, just pick the first person
         if (!matchedItemStr) {
-           matchedItemStr = currentQueue[0];
-           parsedPartnerItem = JSON.parse(matchedItemStr);
+          matchedItemStr = currentQueue[0];
+          parsedPartnerItem = JSON.parse(matchedItemStr);
         }
       }
 
@@ -134,7 +134,7 @@ io.on('connection', (socket) => {
         // Found a match! Try to remove them from the list atomically
         // LREM returns the number of removed elements
         const removedCount = await stateClient.lRem('waiting_queue', 1, matchedItemStr);
-        
+
         if (removedCount > 0) {
           // Successfully claimed the match
           const partnerId = parsedPartnerItem.socketId;
@@ -178,7 +178,7 @@ io.on('connection', (socket) => {
         io.to(partnerId).emit('offer', offer);
       }
     } catch (error) {
-       console.error("Signaling error (offer):", error);
+      console.error("Signaling error (offer):", error);
     }
   });
 
@@ -189,7 +189,7 @@ io.on('connection', (socket) => {
         io.to(partnerId).emit('answer', answer);
       }
     } catch (error) {
-       console.error("Signaling error (answer):", error);
+      console.error("Signaling error (answer):", error);
     }
   });
 
@@ -200,7 +200,7 @@ io.on('connection', (socket) => {
         io.to(partnerId).emit('candidate', candidate);
       }
     } catch (error) {
-       console.error("Signaling error (candidate):", error);
+      console.error("Signaling error (candidate):", error);
     }
   });
 
@@ -219,7 +219,7 @@ io.on('connection', (socket) => {
           if (item.socketId === socket.id) {
             await stateClient.lRem('waiting_queue', 0, itemStr);
           }
-        } catch(e) {}
+        } catch (e) { }
       }
 
       // If they were talking to someone, notify the partner
@@ -236,7 +236,7 @@ io.on('connection', (socket) => {
   });
 });
 
-const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
+const PORT = process.env.PORT || 8000;
+server.listen(PORT, "0.0.0.0", () => {
   console.log(`Signaling server running on port ${PORT}`);
 });
